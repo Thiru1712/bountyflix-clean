@@ -2,95 +2,148 @@
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from bson import ObjectId
-
-from config import is_admin
+from config import is_admin, CHANNEL_ID
 from database import (
-    submit_pending_content,
-    get_all_movies,
-    delete_movie,
+    add_content,
+    delete_by_title,
+    update_title,
+    update_season_link,
+    get_all_titles
 )
+from callbacks import alphabet_menu
 
-# ---------- /admin ----------
+# ======================================================
+# ADMIN PANEL
+# ======================================================
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("❌ Admins only")
         return
 
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Add Movie", callback_data="admin:add")],
-        [InlineKeyboardButton("🗑 Delete Movie", callback_data="admin:delete")]
-    ])
+    keyboard = [
+        [InlineKeyboardButton("➕ Add Anime", callback_data="admin:add")],
+        [InlineKeyboardButton("✏ Edit Anime", callback_data="admin:edit")],
+        [InlineKeyboardButton("🗑 Delete Anime", callback_data="admin:delete")]
+    ]
 
     await update.message.reply_text(
         "🛠 <b>Admin Panel</b>",
-        reply_markup=kb,
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
 
-# ---------- ADD MOVIE ----------
+# ======================================================
+# ADD ANIME
+# ======================================================
 
 async def addanime_submit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ Admins only")
         return
 
-    raw = update.message.text.replace("/addanime", "").strip()
-    if "|" not in raw:
+    text = update.message.text
+
+    if "|" not in text:
         await update.message.reply_text(
-            "❌ Format:\n/addanime Title | S1=link , S2=link"
+            "❌ Format:\n/addanime Title | S1=link, S2=link"
         )
         return
 
-    title, seasons_raw = raw.split("|", 1)
-    seasons = []
+    try:
+        title_part, seasons_part = text.split("|", 1)
+        title = title_part.replace("/addanime", "").strip()
 
-    for part in seasons_raw.split(","):
-        if "=" not in part:
-            continue
-        key, link = part.split("=", 1)
-        num = int(key.strip().replace("S", ""))
-        seasons.append({
-            "season": num,
-            "button_text": f"Season {num}",
-            "redirect": link.strip()
-        })
+        if not title:
+            raise ValueError
 
-    doc = submit_pending_content(title.strip(), seasons, update.effective_user.id)
-    if not doc:
-        await update.message.reply_text("❌ Movie already exists")
-        return
+        seasons = []
+        for s in seasons_part.split(","):
+            key, link = s.split("=")
+            season_no = int("".join(filter(str.isdigit, key)))
+            seasons.append({
+                "season": season_no,
+                "redirect": link.strip()
+            })
 
-    await update.message.reply_text("✅ Movie added successfully")
+        added = add_content(title, seasons)
 
-# ---------- DELETE FLOW ----------
-
-async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    data = q.data
-
-    if not is_admin(q.from_user.id):
-        await q.answer("Admins only")
-        return
-
-    if data == "admin:delete":
-        movies = get_all_movies()
-        if not movies:
-            await q.edit_message_text("No movies available")
+        if not added:
+            await update.message.reply_text("⚠️ Anime already exists")
             return
 
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(m["title"], callback_data=f"delete:{m['_id']}")]
-            for m in movies
-        ])
+        await update.message.reply_text("✅ Movie added successfully")
 
-        await q.edit_message_text(
-            "🗑 Select movie to delete:",
-            reply_markup=kb
+        # Auto-pin alphabet menu
+        try:
+            msg = await context.bot.send_message(
+                chat_id=CHANNEL_ID,
+                text="🎬 <b>Browse Movies</b>",
+                reply_markup=alphabet_menu(),
+                parse_mode="HTML"
+            )
+            await context.bot.pin_chat_message(
+                chat_id=CHANNEL_ID,
+                message_id=msg.message_id,
+                disable_notification=True
+            )
+        except:
+            pass
+
+    except Exception:
+        await update.message.reply_text(
+            "❌ Format error\n/addanime Title | S1=link, S2=link"
         )
 
-    elif data.startswith("delete:"):
-        movie_id = data.split(":")[1]
-        delete_movie(movie_id)
-        await q.edit_message_text("✅ Movie deleted")
+# ======================================================
+# DELETE ANIME
+# ======================================================
+
+async def deleteanime(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage:\n/deleteanime Title")
+        return
+
+    title = " ".join(context.args)
+    deleted = delete_by_title(title)
+
+    if deleted:
+        await update.message.reply_text("🗑 Anime deleted")
+    else:
+        await update.message.reply_text("❌ Anime not found")
+
+# ======================================================
+# EDIT ANIME (TITLE / LINK)
+# ======================================================
+
+async def editanime(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /editanime old_title | new_title
+    /editanime Title | S1=new_link
+    """
+    if not is_admin(update.effective_user.id):
+        return
+
+    if "|" not in update.message.text:
+        await update.message.reply_text(
+            "❌ Format:\n/editanime Old | New  OR  /editanime Title | S1=newlink"
+        )
+        return
+
+    left, right = update.message.text.replace("/editanime", "").split("|", 1)
+    left = left.strip()
+    right = right.strip()
+
+    if right.lower().startswith("s"):
+        season = int("".join(filter(str.isdigit, right)))
+        link = right.split("=", 1)[1]
+        ok = update_season_link(left, season, link)
+    else:
+        ok = update_title(left, right)
+
+    if ok:
+        await update.message.reply_text("✅ Updated successfully")
+    else:
+        await update.message.reply_text("❌ Update failed")
