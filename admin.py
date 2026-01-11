@@ -7,143 +7,149 @@ from database import (
     add_content,
     delete_by_title,
     update_title,
-    update_season_link,
-    get_all_titles
+    update_season_link
 )
 from callbacks import alphabet_menu
 
-# ======================================================
-# ADMIN PANEL
-# ======================================================
+PENDING = {}  # user_id → action data
+
+# ------------------ ADMIN PANEL ------------------
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ Admins only")
         return
 
-    keyboard = [
-        [InlineKeyboardButton("➕ Add Anime", callback_data="admin:add")],
-        [InlineKeyboardButton("✏ Edit Anime", callback_data="admin:edit")],
-        [InlineKeyboardButton("🗑 Delete Anime", callback_data="admin:delete")]
-    ]
-
     await update.message.reply_text(
-        "🛠 <b>Admin Panel</b>",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
+        "🛠 Admin Commands\n\n"
+        "/addanime Title | S1=link\n"
+        "/editanime Old | New\n"
+        "/editanime Title | S1=newlink\n"
+        "/deleteanime Title"
     )
 
-# ======================================================
-# ADD ANIME
-# ======================================================
+# ------------------ ADD ANIME (CONFIRM) ------------------
 
 async def addanime_submit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
     text = update.message.text
-
     if "|" not in text:
-        await update.message.reply_text(
-            "❌ Format:\n/addanime Title | S1=link, S2=link"
-        )
+        await update.message.reply_text("❌ Format:\n/addanime Title | S1=link")
         return
 
     try:
         title_part, seasons_part = text.split("|", 1)
         title = title_part.replace("/addanime", "").strip()
 
-        if not title:
-            raise ValueError
-
         seasons = []
         for s in seasons_part.split(","):
-            key, link = s.split("=")
-            season_no = int("".join(filter(str.isdigit, key)))
+            k, v = s.split("=")
             seasons.append({
-                "season": season_no,
-                "redirect": link.strip()
+                "season": int("".join(filter(str.isdigit, k))),
+                "redirect": v.strip()
             })
 
-        added = add_content(title, seasons)
+        PENDING[update.effective_user.id] = ("add", title, seasons)
 
-        if not added:
-            await update.message.reply_text("⚠️ Anime already exists")
-            return
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Confirm", callback_data="confirm:add")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="confirm:cancel")]
+        ])
 
-        await update.message.reply_text("✅ Movie added successfully")
-
-        # Auto-pin alphabet menu
-        try:
-            msg = await context.bot.send_message(
-                chat_id=CHANNEL_ID,
-                text="🎬 <b>Browse Movies</b>",
-                reply_markup=alphabet_menu(),
-                parse_mode="HTML"
-            )
-            await context.bot.pin_chat_message(
-                chat_id=CHANNEL_ID,
-                message_id=msg.message_id,
-                disable_notification=True
-            )
-        except:
-            pass
-
-    except Exception:
         await update.message.reply_text(
-            "❌ Format error\n/addanime Title | S1=link, S2=link"
+            f"⚠️ Confirm add:\n<b>{title}</b>",
+            reply_markup=kb,
+            parse_mode="HTML"
         )
 
-# ======================================================
-# DELETE ANIME
-# ======================================================
+    except Exception:
+        await update.message.reply_text("❌ Invalid format")
+
+# ------------------ DELETE (CONFIRM) ------------------
 
 async def deleteanime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
-    if not context.args:
-        await update.message.reply_text("Usage:\n/deleteanime Title")
+    title = " ".join(context.args)
+    if not title:
         return
 
-    title = " ".join(context.args)
-    deleted = delete_by_title(title)
+    PENDING[update.effective_user.id] = ("delete", title)
 
-    if deleted:
-        await update.message.reply_text("🗑 Anime deleted")
-    else:
-        await update.message.reply_text("❌ Anime not found")
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗑 Confirm Delete", callback_data="confirm:delete")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="confirm:cancel")]
+    ])
 
-# ======================================================
-# EDIT ANIME (TITLE / LINK)
-# ======================================================
+    await update.message.reply_text(
+        f"⚠️ Delete <b>{title}</b>?",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
+# ------------------ EDIT ------------------
 
 async def editanime(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /editanime old_title | new_title
-    /editanime Title | S1=new_link
-    """
     if not is_admin(update.effective_user.id):
         return
 
-    if "|" not in update.message.text:
-        await update.message.reply_text(
-            "❌ Format:\n/editanime Old | New  OR  /editanime Title | S1=newlink"
-        )
+    body = update.message.text.replace("/editanime", "").strip()
+    if "|" not in body:
         return
 
-    left, right = update.message.text.replace("/editanime", "").split("|", 1)
-    left = left.strip()
-    right = right.strip()
+    left, right = body.split("|", 1)
+    PENDING[update.effective_user.id] = ("edit", left.strip(), right.strip())
 
-    if right.lower().startswith("s"):
-        season = int("".join(filter(str.isdigit, right)))
-        link = right.split("=", 1)[1]
-        ok = update_season_link(left, season, link)
-    else:
-        ok = update_title(left, right)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✏ Confirm Edit", callback_data="confirm:edit")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="confirm:cancel")]
+    ])
 
-    if ok:
-        await update.message.reply_text("✅ Updated successfully")
-    else:
-        await update.message.reply_text("❌ Update failed")
+    await update.message.reply_text("⚠️ Confirm edit?", reply_markup=kb)
+
+# ------------------ CONFIRM CALLBACK ------------------
+
+async def confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    uid = q.from_user.id
+    await q.answer()
+
+    if uid not in PENDING:
+        return
+
+    action = q.data.split(":")[1]
+    data = PENDING.pop(uid)
+
+    if action == "cancel":
+        await q.edit_message_text("❌ Cancelled")
+        return
+
+    if data[0] == "add":
+        ok = add_content(data[1], data[2])
+        await q.edit_message_text("✅ Added" if ok else "⚠️ Already exists")
+
+        # auto-pin menu
+        msg = await context.bot.send_message(
+            CHANNEL_ID,
+            "🎬 <b>Browse Movies</b>",
+            reply_markup=alphabet_menu(),
+            parse_mode="HTML"
+        )
+        await context.bot.pin_chat_message(CHANNEL_ID, msg.message_id, True)
+
+    elif data[0] == "delete":
+        ok = delete_by_title(data[1])
+        await q.edit_message_text("🗑 Deleted" if ok else "❌ Not found")
+
+    elif data[0] == "edit":
+        old, new = data[1], data[2]
+        if new.lower().startswith("s"):
+            season = int("".join(filter(str.isdigit, new)))
+            link = new.split("=", 1)[1]
+            ok = update_season_link(old, season, link)
+        else:
+            ok = update_title(old, new)
+
+        await q.edit_message_text("✅ Updated" if ok else "❌ Failed")
