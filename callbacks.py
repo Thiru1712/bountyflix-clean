@@ -1,93 +1,53 @@
   # callbacks.py
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from database import (
-    get_titles_by_letter,
-    get_content_by_slug
-)
-
-# ======================================================
-# ALPHABET MENU
-# ======================================================
+from database import get_titles_by_letter, get_content_by_slug
 
 def alphabet_menu():
-    letters = [chr(i) for i in range(ord("A"), ord("Z") + 1)]
-    keyboard = []
+    letters = [chr(i) for i in range(65, 91)]
+    rows, row = [], []
 
-    row = []
     for l in letters:
         row.append(InlineKeyboardButton(l, callback_data=f"letter:{l}"))
         if len(row) == 6:
-            keyboard.append(row)
+            rows.append(row)
             row = []
     if row:
-        keyboard.append(row)
+        rows.append(row)
 
-    return InlineKeyboardMarkup(keyboard)
-
-# ======================================================
-# TITLES MENU (A → Anime list)
-# ======================================================
+    return InlineKeyboardMarkup(rows)
 
 def titles_menu(letter):
     titles = get_titles_by_letter(letter)
-    keyboard = []
+    kb = [[InlineKeyboardButton(t["title"], callback_data=f"anime:{t['slug']}")]
+          for t in titles]
 
-    for t in titles:
-        keyboard.append([
-            InlineKeyboardButton(
-                t["title"],
-                callback_data=f"anime:{t['slug']}"
-            )
-        ])
-
-    keyboard.append([
-        InlineKeyboardButton("⬅ Back", callback_data="back:alphabet")
-    ])
-
-    return InlineKeyboardMarkup(keyboard)
-
-# ======================================================
-# SEASONS MENU
-# ======================================================
+    kb.append([InlineKeyboardButton("⬅ Back", callback_data="back:alphabet")])
+    return InlineKeyboardMarkup(kb)
 
 def seasons_menu(slug):
     content = get_content_by_slug(slug)
-    keyboard = []
+    kb = []
 
     for s in content.get("seasons", []):
-        keyboard.append([
+        kb.append([
             InlineKeyboardButton(
                 f"Season {s['season']}",
                 callback_data=f"season:{slug}:{s['season']}"
             )
         ])
 
-    keyboard.append([
+    kb.append([
         InlineKeyboardButton(
             "⬅ Back",
             callback_data=f"back:titles:{content['title'][0].upper()}"
         )
     ])
 
-    return InlineKeyboardMarkup(keyboard)
-
-# ======================================================
-# DOWNLOAD MENU
-# ======================================================
+    return InlineKeyboardMarkup(kb)
 
 def download_menu(slug, season):
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "⬇ Download",
-                callback_data=f"redirect:{slug}:{season}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "⬅ Back",
-                callback_data=f"anime:{slug}"
-            )
-        ]
+        [InlineKeyboardButton("⬇ Download", callback_data=f"redirect:{slug}:{season}")],
+        [InlineKeyboardButton("⬅ Back", callback_data=f"anime:{slug}")]
     ])
