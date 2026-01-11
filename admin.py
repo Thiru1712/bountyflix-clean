@@ -7,11 +7,12 @@ from database import (
     add_content,
     delete_by_title,
     update_title,
-    update_season_link
+    add_or_update_season,
+    delete_season
 )
 from callbacks import alphabet_menu
 
-PENDING = {}  # user_id → action data
+PENDING = {}  # user_id → action tuple
 
 # ------------------ ADMIN PANEL ------------------
 
@@ -21,13 +22,16 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🛠 Admin Commands\n\n"
-        "/addanime Title | S1=link\n"
-        "/editanime Old | New\n"
-        "/editanime Title | S1=newlink\n"
-        "/deleteanime Title"
+        "/addanime\n"
+        "/editanime\n"
+        "/addseason\n"
+        "/deleteseason\n"
+        "/deleteanime\n"
+        "/stats\n"
+        "/help"
     )
 
-# ------------------ ADD ANIME (CONFIRM) ------------------
+# ------------------ ADD ANIME ------------------
 
 async def addanime_submit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -35,7 +39,9 @@ async def addanime_submit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text
     if "|" not in text:
-        await update.message.reply_text("❌ Format:\n/addanime Title | S1=link")
+        await update.message.reply_text(
+            "❌ Format:\n/addanime Title | S1=link, S2=link"
+        )
         return
 
     try:
@@ -50,10 +56,10 @@ async def addanime_submit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "redirect": v.strip()
             })
 
-        PENDING[update.effective_user.id] = ("add", title, seasons)
+        PENDING[update.effective_user.id] = ("addanime", title, seasons)
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Confirm", callback_data="confirm:add")],
+            [InlineKeyboardButton("✅ Confirm", callback_data="confirm:addanime")],
             [InlineKeyboardButton("❌ Cancel", callback_data="confirm:cancel")]
         ])
 
@@ -66,7 +72,99 @@ async def addanime_submit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("❌ Invalid format")
 
-# ------------------ DELETE (CONFIRM) ------------------
+# ------------------ EDIT ANIME ------------------
+
+async def editanime(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    body = update.message.text.replace("/editanime", "").strip()
+    if "|" not in body:
+        await update.message.reply_text(
+            "❌ Format:\n/editanime Old Title | New Title"
+        )
+        return
+
+    old, new = body.split("|", 1)
+    PENDING[update.effective_user.id] = ("editanime", old.strip(), new.strip())
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Confirm", callback_data="confirm:editanime")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="confirm:cancel")]
+    ])
+
+    await update.message.reply_text("⚠️ Confirm edit?", reply_markup=kb)
+
+# ------------------ ADD SEASON ------------------
+
+async def addseason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    if len(context.args) < 3:
+        await update.message.reply_text(
+            "❌ Format:\n/addseason Title Season link"
+        )
+        return
+
+    try:
+        season = int(context.args[-2])
+        link = context.args[-1]
+        title = " ".join(context.args[:-2])
+
+        PENDING[update.effective_user.id] = (
+            "addseason", title, season, link
+        )
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Confirm", callback_data="confirm:addseason")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="confirm:cancel")]
+        ])
+
+        await update.message.reply_text(
+            f"⚠️ Confirm add/update:\n<b>{title}</b>\nSeason {season}",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+
+    except ValueError:
+        await update.message.reply_text("❌ Season must be a number")
+
+# ------------------ DELETE SEASON ------------------
+
+async def deleteseason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ Format:\n/deleteseason Title Season"
+        )
+        return
+
+    try:
+        season = int(context.args[-1])
+        title = " ".join(context.args[:-1])
+
+        PENDING[update.effective_user.id] = (
+            "deleteseason", title, season
+        )
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗑 Confirm Delete", callback_data="confirm:deleteseason")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="confirm:cancel")]
+        ])
+
+        await update.message.reply_text(
+            f"⚠️ Confirm delete:\n<b>{title}</b>\nSeason {season}",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+
+    except ValueError:
+        await update.message.reply_text("❌ Season must be a number")
+
+# ------------------ DELETE ANIME ------------------
 
 async def deleteanime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -76,40 +174,20 @@ async def deleteanime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not title:
         return
 
-    PENDING[update.effective_user.id] = ("delete", title)
+    PENDING[update.effective_user.id] = ("deleteanime", title)
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🗑 Confirm Delete", callback_data="confirm:delete")],
+        [InlineKeyboardButton("🗑 Confirm Delete", callback_data="confirm:deleteanime")],
         [InlineKeyboardButton("❌ Cancel", callback_data="confirm:cancel")]
     ])
 
     await update.message.reply_text(
-        f"⚠️ Delete <b>{title}</b>?",
+        f"⚠️ Confirm delete:\n<b>{title}</b>",
         reply_markup=kb,
         parse_mode="HTML"
     )
 
-# ------------------ EDIT ------------------
-
-async def editanime(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        return
-
-    body = update.message.text.replace("/editanime", "").strip()
-    if "|" not in body:
-        return
-
-    left, right = body.split("|", 1)
-    PENDING[update.effective_user.id] = ("edit", left.strip(), right.strip())
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✏ Confirm Edit", callback_data="confirm:edit")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="confirm:cancel")]
-    ])
-
-    await update.message.reply_text("⚠️ Confirm edit?", reply_markup=kb)
-
-# ------------------ CONFIRM CALLBACK ------------------
+# ------------------ CONFIRM HANDLER ------------------
 
 async def confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -126,11 +204,10 @@ async def confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("❌ Cancelled")
         return
 
-    if data[0] == "add":
+    if data[0] == "addanime":
         ok = add_content(data[1], data[2])
         await q.edit_message_text("✅ Added" if ok else "⚠️ Already exists")
 
-        # auto-pin menu
         msg = await context.bot.send_message(
             CHANNEL_ID,
             "🎬 <b>Browse Movies</b>",
@@ -139,17 +216,20 @@ async def confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await context.bot.pin_chat_message(CHANNEL_ID, msg.message_id, True)
 
-    elif data[0] == "delete":
-        ok = delete_by_title(data[1])
-        await q.edit_message_text("🗑 Deleted" if ok else "❌ Not found")
-
-    elif data[0] == "edit":
-        old, new = data[1], data[2]
-        if new.lower().startswith("s"):
-            season = int("".join(filter(str.isdigit, new)))
-            link = new.split("=", 1)[1]
-            ok = update_season_link(old, season, link)
-        else:
-            ok = update_title(old, new)
-
+    elif data[0] == "editanime":
+        ok = update_title(data[1], data[2])
         await q.edit_message_text("✅ Updated" if ok else "❌ Failed")
+
+    elif data[0] == "addseason":
+        _, title, season, link = data
+        ok = add_or_update_season(title, season, link)
+        await q.edit_message_text("✅ Season saved" if ok else "❌ Failed")
+
+    elif data[0] == "deleteseason":
+        _, title, season = data
+        ok = delete_season(title, season)
+        await q.edit_message_text("🗑 Season deleted" if ok else "❌ Failed")
+
+    elif data[0] == "deleteanime":
+        ok = delete_by_title(data[1])
+        await q.edit_message_text("🗑 Anime deleted" if ok else "❌ Failed")
