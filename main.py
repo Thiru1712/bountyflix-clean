@@ -2,7 +2,6 @@
 
 import os
 import time
-import asyncio
 import threading
 from flask import Flask, jsonify
 
@@ -33,7 +32,7 @@ from admin import (
 )
 
 # ======================================================
-# FLASK (HEALTH CHECK)
+# FLASK APP (HEALTH CHECK FOR RENDER)
 # ======================================================
 
 app = Flask(__name__)
@@ -51,19 +50,14 @@ def health():
     })
 
 def run_web():
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
+    port = int(os.getenv("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 # ======================================================
-# SAFE REPLY HELPER (CRITICAL FIX)
+# SAFE REPLY (PREVENTS SILENT FAILURES)
 # ======================================================
 
 async def safe_reply(update: Update, text: str, **kwargs):
-    """
-    Replies safely whether command came from:
-    - normal message
-    - menu button
-    - UI command
-    """
     if update.message:
         await update.message.reply_text(text, **kwargs)
     elif update.callback_query:
@@ -126,12 +120,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     await query.answer()
 
-    # ---------- ADMIN CALLBACKS ----------
+    # ----- ADMIN CALLBACKS -----
     if data.startswith("admin:") or data.startswith("delete:"):
         await admin_callbacks(update, context)
         return
 
-    # ---------- USER FLOW ----------
+    # ----- USER FLOW -----
     if data.startswith("letter:"):
         inc_stat("alphabet_clicks")
         letter = data.split(":")[1]
@@ -168,18 +162,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         content = get_content_by_slug(slug)
         if not content:
             return
+
         for s in content.get("seasons", []):
             if s["season"] == int(season):
                 await context.bot.send_message(
                     chat_id=query.from_user.id,
                     text=s["redirect"]
                 )
+                return
 
 # ======================================================
-# BOT RUNNER
+# BOT START (CORRECT PTB v20 STYLE)
 # ======================================================
 
-async def bot_main():
+def start_bot():
     application = ApplicationBuilder().token(os.getenv("TOKEN")).build()
 
     application.add_handler(CommandHandler("start", start))
@@ -189,15 +185,7 @@ async def bot_main():
     application.add_handler(CommandHandler("addanime", addanime_submit))
     application.add_handler(CallbackQueryHandler(callback_handler))
 
-    await application.run_polling()
-
-def start_bot():
-    while True:
-        try:
-            asyncio.run(bot_main())
-        except Exception as e:
-            print("CRASH:", e)
-            time.sleep(5)
+    application.run_polling()
 
 # ======================================================
 # ENTRY POINT
