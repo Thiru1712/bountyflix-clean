@@ -26,9 +26,6 @@ except Exception as e:
 def slugify(title):
     return title.lower().replace(" ", "")
 
-def exists(title):
-    return approved.find_one({"slug": slugify(title)}) is not None
-
 def add_content(title, seasons):
     slug = slugify(title)
     if approved.find_one({"slug": slug}):
@@ -41,27 +38,6 @@ def add_content(title, seasons):
     })
     return True
 
-def delete_by_title(title):
-    res = approved.delete_one({"slug": slugify(title)})
-    return res.deleted_count > 0
-
-def update_title(old, new):
-    if exists(new):
-        return False
-
-    res = approved.update_one(
-        {"slug": slugify(old)},
-        {"$set": {"title": new, "slug": slugify(new)}}
-    )
-    return res.modified_count > 0
-
-def update_season_link(title, season, link):
-    res = approved.update_one(
-        {"slug": slugify(title), "seasons.season": season},
-        {"$set": {"seasons.$.redirect": link}}
-    )
-    return res.modified_count > 0
-
 def get_titles_by_letter(letter):
     return list(
         approved.find(
@@ -72,6 +48,44 @@ def get_titles_by_letter(letter):
 
 def get_content_by_slug(slug):
     return approved.find_one({"slug": slug})
+
+def delete_by_title(title):
+    res = approved.delete_one({"slug": slugify(title)})
+    return res.deleted_count > 0
+
+def update_title(old, new):
+    if approved.find_one({"slug": slugify(new)}):
+        return False
+
+    res = approved.update_one(
+        {"slug": slugify(old)},
+        {"$set": {"title": new, "slug": slugify(new)}}
+    )
+    return res.modified_count > 0
+
+def add_or_update_season(title, season, link):
+    slug = slugify(title)
+
+    res = approved.update_one(
+        {"slug": slug, "seasons.season": season},
+        {"$set": {"seasons.$.redirect": link}}
+    )
+
+    if res.modified_count > 0:
+        return True
+
+    res = approved.update_one(
+        {"slug": slug},
+        {"$push": {"seasons": {"season": season, "redirect": link}}}
+    )
+    return res.modified_count > 0
+
+def delete_season(title, season):
+    res = approved.update_one(
+        {"slug": slugify(title)},
+        {"$pull": {"seasons": {"season": season}}}
+    )
+    return res.modified_count > 0
 
 # ------------------ stats ------------------
 
