@@ -28,11 +28,13 @@ from callbacks import (
 from admin import (
     admin_panel,
     addanime_submit,
+    deleteanime,
+    editanime,
     admin_callbacks,
 )
 
 # ======================================================
-# FLASK APP (HEALTH CHECK FOR RENDER)
+# FLASK (HEALTH CHECK FOR RENDER)
 # ======================================================
 
 app = Flask(__name__)
@@ -54,7 +56,7 @@ def run_web():
     app.run(host="0.0.0.0", port=port)
 
 # ======================================================
-# SAFE REPLY (PREVENTS SILENT FAILURES)
+# SAFE REPLY
 # ======================================================
 
 async def safe_reply(update: Update, text: str, **kwargs):
@@ -64,7 +66,7 @@ async def safe_reply(update: Update, text: str, **kwargs):
         await update.callback_query.message.reply_text(text, **kwargs)
 
 # ======================================================
-# COMMAND HANDLERS
+# COMMANDS
 # ======================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -85,8 +87,9 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛠 <b>Admin Commands</b>\n\n"
         "/start – Browse movies\n"
         "/admin – Admin panel\n"
-        "/addanime – Add movie/anime\n"
-        "/broadcast – Broadcast message\n"
+        "/addanime – Add anime\n"
+        "/editanime – Edit title or link\n"
+        "/deleteanime – Delete anime\n"
         "/stats – Bot statistics\n"
         "/help – This help",
         parse_mode="HTML"
@@ -98,7 +101,11 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     stats = get_stats()
-    uptime = int(time.time() - START_TIME)
+    uptime_seconds = int(time.time() - START_TIME)
+
+    h = uptime_seconds // 3600
+    m = (uptime_seconds % 3600) // 60
+    s = uptime_seconds % 60
 
     await safe_reply(
         update,
@@ -107,7 +114,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Anime clicks: {stats.get('anime_clicks', 0)}\n"
         f"Season clicks: {stats.get('season_clicks', 0)}\n"
         f"Downloads: {stats.get('download_clicks', 0)}\n\n"
-        f"⏱ Uptime: {uptime} seconds",
+        f"⏱ Uptime: {h}h {m}m {s}s",
         parse_mode="HTML"
     )
 
@@ -120,12 +127,30 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     await query.answer()
 
-    # ----- ADMIN CALLBACKS -----
+    # -------- BACK NAVIGATION --------
+    if data.startswith("back:"):
+        parts = data.split(":")
+        if parts[1] == "alphabet":
+            await query.edit_message_text(
+                "🎬 <b>Available Movies</b>",
+                reply_markup=alphabet_menu(),
+                parse_mode="HTML"
+            )
+        elif parts[1] == "titles":
+            letter = parts[2]
+            await query.edit_message_text(
+                f"🔤 <b>{letter}</b>",
+                reply_markup=titles_menu(letter),
+                parse_mode="HTML"
+            )
+        return
+
+    # -------- ADMIN CALLBACKS --------
     if data.startswith("admin:") or data.startswith("delete:"):
         await admin_callbacks(update, context)
         return
 
-    # ----- USER FLOW -----
+    # -------- USER FLOW --------
     if data.startswith("letter:"):
         inc_stat("alphabet_clicks")
         letter = data.split(":")[1]
@@ -162,7 +187,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         content = get_content_by_slug(slug)
         if not content:
             return
-
         for s in content.get("seasons", []):
             if s["season"] == int(season):
                 await context.bot.send_message(
@@ -172,7 +196,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
 # ======================================================
-# BOT START (CORRECT PTB v20 STYLE)
+# BOT START
 # ======================================================
 
 def start_bot():
@@ -183,6 +207,8 @@ def start_bot():
     application.add_handler(CommandHandler("stats", stats_cmd))
     application.add_handler(CommandHandler("admin", admin_panel))
     application.add_handler(CommandHandler("addanime", addanime_submit))
+    application.add_handler(CommandHandler("deleteanime", deleteanime))
+    application.add_handler(CommandHandler("editanime", editanime))
     application.add_handler(CallbackQueryHandler(callback_handler))
 
     application.run_polling()
