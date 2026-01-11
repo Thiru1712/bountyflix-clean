@@ -26,6 +26,8 @@ from admin import (
     addanime_submit,
     editanime,
     deleteanime,
+    addseason,
+    deleteseason,
     confirm_handler,
 )
 from database import (
@@ -36,7 +38,7 @@ from database import (
 )
 
 # ======================================================
-# FLASK APP (HEALTH CHECK)
+# FLASK (HEALTH CHECK FOR RENDER)
 # ======================================================
 
 app = Flask(__name__)
@@ -88,11 +90,14 @@ Show admin panel
 /addanime Title | S1=link, S2=link
 Add a new anime or movie
 
-/editanime Title | S2=newlink
-Add or update a season link
-
 /editanime Old Title | New Title
 Rename an anime/movie
+
+/addseason Title Season link
+Add or update a season
+
+/deleteseason Title Season
+Delete a season
 
 /deleteanime Title
 Delete an anime/movie
@@ -241,9 +246,13 @@ def start_bot():
     application.add_handler(CommandHandler("help", help_cmd))
     application.add_handler(CommandHandler("stats", stats_cmd))
     application.add_handler(CommandHandler("admin", admin_panel))
+
     application.add_handler(CommandHandler("addanime", addanime_submit))
     application.add_handler(CommandHandler("editanime", editanime))
+    application.add_handler(CommandHandler("addseason", addseason))
+    application.add_handler(CommandHandler("deleteseason", deleteseason))
     application.add_handler(CommandHandler("deleteanime", deleteanime))
+
     application.add_handler(CallbackQueryHandler(callback_router))
 
     # Scheduled jobs
