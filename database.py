@@ -1,75 +1,95 @@
  # database.py
 
-import os, sys
-from datetime import datetime
-from pymongo import MongoClient, ASCENDING
-from bson import ObjectId
+import os
+from pymongo import MongoClient
+from dotenv import load_dotenv
 
-MONGO_URI = os.getenv("MONGO_URI")
+load_dotenv()
 
-try:
-    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    client.admin.command("ping")
-    print("✅ MongoDB connected")
-except Exception as e:
-    print("❌ MongoDB failed:", e)
-    sys.exit(1)
+# ======================================================
+# MONGO CONNECTION (SAFE)
+# ======================================================
 
-db = client["telegram_bot"]
+client = MongoClient(
+    os.getenv("MONGO_URI"),
+    serverSelectionTimeoutMS=5000
+)
 
+db = client["bountyflix"]
 approved_content_col = db["approved_content"]
-pending_content_col = db["pending_content"]
 stats_col = db["stats"]
 
-approved_content_col.create_index([("slug", ASCENDING)], unique=True)
+try:
+    client.admin.command("ping")
+    print("MongoDB connected")
+except Exception as e:
+    print("MongoDB failed:", e)
 
-# ---------- HELPERS ----------
+# ======================================================
+# CONTENT HELPERS
+# ======================================================
 
-def normalize_slug(text: str) -> str:
-    return text.strip().lower().replace(" ", "_")
+def slugify(title: str) -> str:
+    return title.lower().replace(" ", "")
 
-# ---------- CONTENT ----------
+def add_content(title, seasons):
+    slug = slugify(title)
+    if approved_content_col.find_one({"slug": slug}):
+        return False
 
-def get_letters_available():
-    return sorted(approved_content_col.distinct("letter"))
+    approved_content_col.insert_one({
+        "title": title,
+        "slug": slug,
+        "seasons": seasons
+    })
+    return True
 
 def get_titles_by_letter(letter):
     return list(
         approved_content_col.find(
-            {"letter": letter.upper()},
-            {"_id": 1, "title": 1, "slug": 1}
+            {"title": {"$regex": f"^{letter}", "$options": "i"}},
+            {"title": 1, "slug": 1}
         ).sort("title", 1)
     )
 
 def get_content_by_slug(slug):
     return approved_content_col.find_one({"slug": slug})
 
-def submit_pending_content(title, seasons, user_id):
-    doc = {
-        "title": title,
-        "slug": normalize_slug(title),
-        "letter": title[0].upper(),
-        "seasons": seasons,
-        "created_by": user_id,
-        "created_at": datetime.utcnow()
-    }
-    try:
-        approved_content_col.insert_one(doc)
-    except Exception:
-        return None
-    return doc
+def delete_by_title(title):
+    res = approved_content_col.delete_one(
+        {"title": {"$regex": f"^{title}$", "$options": "i"}}
+    )
+    return res.deleted_count > 0
 
-# ---------- ADMIN MANAGEMENT ----------
+def update_title(old, new):
+    old_slug = slugify(old)
+    new_slug = slugify(new)
 
-def get_all_movies():
+    if approved_content_col.find_one({"slug": new_slug}):
+        return False
+
+    res = approved_content_col.update_one(
+        {"slug": old_slug},
+        {"$set": {"title": new, "slug": new_slug}}
+    )
+    return res.modified_count > 0
+
+def update_season_link(title, season, link):
+    slug = slugify(title)
+    res = approved_content_col.update_one(
+        {"slug": slug, "seasons.season": season},
+        {"$set": {"seasons.$.redirect": link}}
+    )
+    return res.modified_count > 0
+
+def get_all_titles():
     return list(
-        approved_content_col.find({}, {"_id": 1, "title": 1}).sort("title", 1)
+        approved_content_col.find({}, {"title": 1}).sort("title", 1)
     )
 
-def delete_movie(movie_id):
-    return approved_content_col.delete_one({"_id": ObjectId(movie_id)})
-
-# ---------- ANALYTICS ----------
+# ======================================================
+# STATS
+# ======================================================
 
 def inc_stat(key):
     stats_col.update_one(
@@ -79,4 +99,5 @@ def inc_stat(key):
     )
 
 def get_stats():
-    return stats_col.find_one({"_id": "global"}) or {}
+    doc = stats_col.find_one({"_id": "global"})
+    return doc or {}
