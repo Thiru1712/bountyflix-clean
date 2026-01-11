@@ -1,132 +1,269 @@
  # main.py
 
-import os, time, threading
-from flask import Flask, jsonify
+import os
+import time
+import threading
 from datetime import timedelta
+from flask import Flask, jsonify
 
+from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
 )
 
-from callbacks import *
-from admin import *
-from database import *
 from config import CHANNEL_ID, is_admin
+from callbacks import (
+    alphabet_menu,
+    titles_menu,
+    seasons_menu,
+    download_menu,
+)
+from admin import (
+    admin_panel,
+    addanime_submit,
+    editanime,
+    deleteanime,
+    confirm_handler,
+)
+from database import (
+    client,
+    get_content_by_slug,
+    inc_stat,
+    get_stats,
+)
+
+# ======================================================
+# FLASK APP (HEALTH CHECK)
+# ======================================================
 
 app = Flask(__name__)
-START = time.time()
+START_TIME = time.time()
 
 @app.route("/")
 def home():
-    return "BountyFlix alive"
+    return "BountyFlix alive 🟢"
 
 @app.route("/health")
 def health():
-    return jsonify(uptime=int(time.time() - START))
+    return jsonify(
+        status="ok",
+        uptime=int(time.time() - START_TIME)
+    )
 
 def run_web():
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
+    port = int(os.getenv("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
-# ------------------ MAINTENANCE ------------------
+# ======================================================
+# COMMANDS
+# ======================================================
 
-async def maintenance_job(ctx):
-    try:
-        client.admin.command("ping")
-        print("🟢 Mongo OK")
-    except Exception as e:
-        print("🔴 Mongo fail", e)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🎬 <b>Available Movies</b>",
+        reply_markup=alphabet_menu(),
+        parse_mode="HTML"
+    )
 
-async def autopin_job(ctx):
-    try:
-        msg = await ctx.bot.send_message(
-            CHANNEL_ID,
-            "🎬 <b>Browse Movies</b>",
-            reply_markup=alphabet_menu(),
-            parse_mode="HTML"
-        )
-        await ctx.bot.pin_chat_message(CHANNEL_ID, msg.message_id, True)
-    except:
-        pass
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Admins only")
+        return
 
-# ------------------ CALLBACK ROUTER ------------------
+    await update.message.reply_text(
+        """🛠 BountyFlix — Admin Help
 
-async def callback_router(update, context):
-    data = update.callback_query.data
+/start
+Browse movies & anime
 
+/help
+Show this help message
+
+/admin
+Show admin panel
+
+/addanime Title | S1=link, S2=link
+Add a new anime or movie
+
+/editanime Title | S2=newlink
+Add or update a season link
+
+/editanime Old Title | New Title
+Rename an anime/movie
+
+/deleteanime Title
+Delete an anime/movie
+
+/stats
+Show bot statistics & uptime
+""",
+        parse_mode="HTML"
+    )
+
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Admins only")
+        return
+
+    stats = get_stats()
+    uptime = int(time.time() - START_TIME)
+
+    h = uptime // 3600
+    m = (uptime % 3600) // 60
+    s = uptime % 60
+
+    await update.message.reply_text(
+        f"📊 <b>BountyFlix Stats</b>\n\n"
+        f"Alphabet clicks: {stats.get('alphabet_clicks', 0)}\n"
+        f"Anime clicks: {stats.get('anime_clicks', 0)}\n"
+        f"Season clicks: {stats.get('season_clicks', 0)}\n"
+        f"Downloads: {stats.get('download_clicks', 0)}\n\n"
+        f"⏱ Uptime: {h}h {m}m {s}s",
+        parse_mode="HTML"
+    )
+
+# ======================================================
+# CALLBACK ROUTER
+# ======================================================
+
+async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    await query.answer()
+
+    # ---------- CONFIRMATION ----------
     if data.startswith("confirm:"):
         await confirm_handler(update, context)
         return
 
+    # ---------- BACK BUTTON ----------
     if data.startswith("back:"):
-        if data == "back:alphabet":
-            await update.callback_query.edit_message_text(
-                "🎬 Available Movies",
-                reply_markup=alphabet_menu()
+        parts = data.split(":")
+        if parts[1] == "alphabet":
+            await query.edit_message_text(
+                "🎬 <b>Available Movies</b>",
+                reply_markup=alphabet_menu(),
+                parse_mode="HTML"
             )
-        else:
-            _, _, l = data.split(":")
-            await update.callback_query.edit_message_text(
-                l,
-                reply_markup=titles_menu(l)
+        elif parts[1] == "titles":
+            letter = parts[2]
+            await query.edit_message_text(
+                f"🔤 <b>{letter}</b>",
+                reply_markup=titles_menu(letter),
+                parse_mode="HTML"
             )
         return
 
+    # ---------- USER FLOW ----------
     if data.startswith("letter:"):
         inc_stat("alphabet_clicks")
-        l = data.split(":")[1]
-        await update.callback_query.edit_message_text(
-            l, reply_markup=titles_menu(l)
+        letter = data.split(":")[1]
+        await query.edit_message_text(
+            f"🔤 <b>{letter}</b>",
+            reply_markup=titles_menu(letter),
+            parse_mode="HTML"
         )
 
     elif data.startswith("anime:"):
         inc_stat("anime_clicks")
         slug = data.split(":")[1]
-        c = get_content_by_slug(slug)
-        await update.callback_query.edit_message_text(
-            c["title"], reply_markup=seasons_menu(slug)
+        content = get_content_by_slug(slug)
+        if not content:
+            return
+        await query.edit_message_text(
+            f"🎬 <b>{content['title']}</b>",
+            reply_markup=seasons_menu(slug),
+            parse_mode="HTML"
         )
 
     elif data.startswith("season:"):
         inc_stat("season_clicks")
-        _, slug, s = data.split(":")
-        await update.callback_query.edit_message_text(
-            "⬇ Download", reply_markup=download_menu(slug, int(s))
+        _, slug, season = data.split(":")
+        await query.edit_message_text(
+            "⬇ <b>Select download</b>",
+            reply_markup=download_menu(slug, int(season)),
+            parse_mode="HTML"
         )
 
     elif data.startswith("redirect:"):
         inc_stat("download_clicks")
-        _, slug, s = data.split(":")
-        c = get_content_by_slug(slug)
-        for x in c["seasons"]:
-            if x["season"] == int(s):
-                await context.bot.send_message(
-                    update.effective_user.id,
-                    x["redirect"]
-                )
+        _, slug, season = data.split(":")
+        content = get_content_by_slug(slug)
+        if not content:
+            return
 
-# ------------------ BOT START ------------------
+        for s in content.get("seasons", []):
+            if s["season"] == int(season):
+                await context.bot.send_message(
+                    chat_id=query.from_user.id,
+                    text=s["redirect"]
+                )
+                return
+
+# ======================================================
+# MAINTENANCE & AUTO-PIN JOBS
+# ======================================================
+
+async def maintenance_job(context):
+    try:
+        client.admin.command("ping")
+        print("🟢 Maintenance: MongoDB OK")
+    except Exception as e:
+        print("🔴 Maintenance error:", e)
+
+async def autopin_job(context):
+    try:
+        msg = await context.bot.send_message(
+            CHANNEL_ID,
+            "🎬 <b>Browse Movies</b>",
+            reply_markup=alphabet_menu(),
+            parse_mode="HTML"
+        )
+        await context.bot.pin_chat_message(
+            CHANNEL_ID,
+            msg.message_id,
+            disable_notification=True
+        )
+    except Exception as e:
+        print("⚠️ Auto-pin failed:", e)
+
+# ======================================================
+# BOT START
+# ======================================================
 
 def start_bot():
-    appb = ApplicationBuilder().token(os.getenv("TOKEN")).build()
+    application = ApplicationBuilder().token(os.getenv("TOKEN")).build()
 
-    appb.add_handler(CommandHandler("start", start))
-    appb.add_handler(CommandHandler("help", admin_panel))
-    appb.add_handler(CommandHandler("admin", admin_panel))
-    appb.add_handler(CommandHandler("addanime", addanime_submit))
-    appb.add_handler(CommandHandler("editanime", editanime))
-    appb.add_handler(CommandHandler("deleteanime", deleteanime))
-    appb.add_handler(CallbackQueryHandler(callback_router))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_cmd))
+    application.add_handler(CommandHandler("stats", stats_cmd))
+    application.add_handler(CommandHandler("admin", admin_panel))
+    application.add_handler(CommandHandler("addanime", addanime_submit))
+    application.add_handler(CommandHandler("editanime", editanime))
+    application.add_handler(CommandHandler("deleteanime", deleteanime))
+    application.add_handler(CallbackQueryHandler(callback_router))
 
-    appb.job_queue.run_repeating(maintenance_job, timedelta(minutes=5))
-    appb.job_queue.run_repeating(autopin_job, timedelta(hours=6))
-
-    appb.run_polling()
-
-async def start(update, context):
-    await update.message.reply_text(
-        "🎬 Available Movies",
-        reply_markup=alphabet_menu()
+    # Scheduled jobs
+    application.job_queue.run_repeating(
+        maintenance_job,
+        interval=timedelta(minutes=5),
+        first=10
     )
+
+    application.job_queue.run_repeating(
+        autopin_job,
+        interval=timedelta(hours=6),
+        first=30
+    )
+
+    application.run_polling()
+
+# ======================================================
+# ENTRY POINT
+# ======================================================
 
 if __name__ == "__main__":
     threading.Thread(target=run_web, daemon=True).start()
