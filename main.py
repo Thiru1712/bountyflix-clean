@@ -3,7 +3,6 @@
 import os
 import time
 import threading
-from datetime import timedelta
 from flask import Flask, jsonify
 
 from telegram import Update
@@ -25,13 +24,12 @@ from admin import (
     admin_panel,
     addanime_submit,
     editanime,
-    deleteanime,
     addseason,
     deleteseason,
+    deleteanime,
     confirm_handler,
 )
 from database import (
-    client,
     get_content_by_slug,
     inc_stat,
     get_stats,
@@ -178,6 +176,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         content = get_content_by_slug(slug)
         if not content:
             return
+
         await query.edit_message_text(
             f"🎬 <b>{content['title']}</b>",
             reply_markup=seasons_menu(slug),
@@ -209,33 +208,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
 # ======================================================
-# MAINTENANCE & AUTO-PIN JOBS
-# ======================================================
-
-async def maintenance_job(context):
-    try:
-        client.admin.command("ping")
-        print("🟢 Maintenance: MongoDB OK")
-    except Exception as e:
-        print("🔴 Maintenance error:", e)
-
-async def autopin_job(context):
-    try:
-        msg = await context.bot.send_message(
-            CHANNEL_ID,
-            "🎬 <b>Browse Movies</b>",
-            reply_markup=alphabet_menu(),
-            parse_mode="HTML"
-        )
-        await context.bot.pin_chat_message(
-            CHANNEL_ID,
-            msg.message_id,
-            disable_notification=True
-        )
-    except Exception as e:
-        print("⚠️ Auto-pin failed:", e)
-
-# ======================================================
 # BOT START
 # ======================================================
 
@@ -254,19 +226,6 @@ def start_bot():
     application.add_handler(CommandHandler("deleteanime", deleteanime))
 
     application.add_handler(CallbackQueryHandler(callback_router))
-
-    # Scheduled jobs
-    application.job_queue.run_repeating(
-        maintenance_job,
-        interval=timedelta(minutes=5),
-        first=10
-    )
-
-    application.job_queue.run_repeating(
-        autopin_job,
-        interval=timedelta(hours=6),
-        first=30
-    )
 
     application.run_polling()
 
